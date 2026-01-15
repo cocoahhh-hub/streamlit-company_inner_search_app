@@ -131,8 +131,22 @@ def initialize_retriever():
         separator="\n"
     )
 
-    # チャンク分割を実施
-    splitted_docs = text_splitter.split_documents(docs_all)
+    # CSVファイルのドキュメントとその他のドキュメントを分離
+    # CSVファイルのドキュメントはチャンク分割をスキップ（部署ごとの情報を1つのチャンクとして保持）
+    csv_docs = []
+    other_docs = []
+    for doc in docs_all:
+        # CSVファイルの場合はチャンク分割をスキップ
+        if doc.metadata.get("source", "").endswith(".csv"):
+            csv_docs.append(doc)
+        else:
+            other_docs.append(doc)
+    
+    # その他のドキュメントに対してチャンク分割を実施
+    splitted_other_docs = text_splitter.split_documents(other_docs)
+    
+    # CSVファイルのドキュメントとチャンク分割されたドキュメントを結合
+    splitted_docs = csv_docs + splitted_other_docs
 
     # ベクターストアの作成
     db = Chroma.from_documents(splitted_docs, embedding=embeddings)
@@ -203,6 +217,7 @@ def recursive_file_check(path, docs_all):
         file_load(path, docs_all)
 
 # 【問題6】csvファイルを1つのドキュメントに統合
+#  → 部署全員のリスト抽出に失敗するため、部署ごとにグループ化して1つのドキュメントに統合
 def load_csv_as_unified_document(path):
     """
     CSVファイルを部署ごとにグループ化して1つのドキュメントに統合
@@ -259,26 +274,18 @@ def load_csv_as_unified_document(path):
         departments[dept].append(row)
     
     # ==========================================
-    # ステップ3: 部署ごとに構造化されたテキストを生成
+    # ステップ3: 部署ごとに個別のDocumentオブジェクトを作成
     # ==========================================
-    # unified_content_parts: 統合されたテキストの各部分を格納するリスト
-    # 出力イメージ:
-    # [
-    #   "\n## 人事部に所属している従業員情報\n",
-    #   "人事部に所属している従業員は以下の9名です：\n",
-    #   "【社員ID: EMP0006】\n氏名: 斉藤 舞\n性別: 女性\n...",
-    #   "",
-    #   "【社員ID: EMP0013】\n氏名: 鈴木 あすか\n性別: 男性\n...",
-    #   "",
-    #   "\n## 営業部に所属している従業員情報\n",
-    #   ...
-    # ]
-    unified_content_parts = []
+    # 部署ごとに個別のドキュメントとして作成することで、
+    # 検索時に部署全体の情報が取得できるようになる
     for dept, employees in departments.items():
         # dept: 部署名（例: '人事部'）
         # employees: その部署に所属する社員のリスト
-        unified_content_parts.append(f"\n## {dept}に所属している従業員情報\n")
-        unified_content_parts.append(f"{dept}に所属している従業員は以下の{len(employees)}名です：\n")
+        
+        # 部署ごとのコンテンツを格納するリスト
+        dept_content_parts = []
+        dept_content_parts.append(f"## {dept}に所属している従業員情報\n")
+        dept_content_parts.append(f"{dept}に所属している従業員は以下の{len(employees)}名です：\n")
         
         for emp in employees:
             # emp: 1人の社員の情報（辞書形式）
@@ -306,47 +313,46 @@ def load_csv_as_unified_document(path):
             
             # emp_infoの各行を改行で結合して1つの文字列にし、リストに追加
             # 出力イメージ: "【社員ID: EMP0006】\n氏名: 斉藤 舞\n性別: 女性\n..."
-            unified_content_parts.append("\n".join(emp_info))
-            unified_content_parts.append("")  # 空行で区切り
-    
-    # ==========================================
-    # ステップ4: 統合されたコンテンツを作成
-    # ==========================================
-    # unified_content: すべての部署の社員情報を統合した1つの文字列
-    # 出力イメージ:
-    # """
-    # ## 人事部に所属している従業員情報
-    # 人事部に所属している従業員は以下の9名です：
-    # 
-    # 【社員ID: EMP0006】
-    # 氏名: 斉藤 舞
-    # 性別: 女性
-    # ...
-    # 
-    # 【社員ID: EMP0013】
-    # ...
-    # 
-    # ## 営業部に所属している従業員情報
-    # ...
-    # """
-    unified_content = "\n".join(unified_content_parts)
-    
-    # ==========================================
-    # ステップ5: Documentオブジェクトを作成
-    # ==========================================
-    # doc: LangChainのDocumentオブジェクト
-    # 出力イメージ:
-    # Document(
-    #   page_content="## 人事部に所属している従業員情報\n...",
-    #   metadata={"source": "./data/社員について/社員名簿.csv"}
-    # )
-    doc = LangchainDocument(
-        page_content=unified_content,
-        metadata={"source": path}
-    )
-    # docs: Documentオブジェクトのリスト（この場合は1つのDocumentのみ）
-    # 出力イメージ: [Document(page_content="...", metadata={"source": "..."})]
-    docs.append(doc)
+            dept_content_parts.append("\n".join(emp_info))
+            dept_content_parts.append("")  # 空行で区切り
+        
+        # ==========================================
+        # ステップ4: 部署ごとのDocumentオブジェクトを作成
+        # ==========================================
+        # dept_content: 1つの部署の社員情報を統合した文字列
+        # 出力イメージ（人事部の場合）:
+        # """
+        # ## 人事部に所属している従業員情報
+        # 人事部に所属している従業員は以下の9名です：
+        # 
+        # 【社員ID: EMP0006】
+        # 氏名: 斉藤 舞
+        # 性別: 女性
+        # ...
+        # 
+        # 【社員ID: EMP0013】
+        # ...
+        # """
+        dept_content = "\n".join(dept_content_parts)
+        
+        # doc: 1つの部署のDocumentオブジェクト
+        # 出力イメージ:
+        # Document(
+        #   page_content="## 人事部に所属している従業員情報\n人事部に所属している従業員は以下の9名です：\n...",
+        #   metadata={"source": "./data/社員について/社員名簿.csv"}
+        # )
+        doc = LangchainDocument(
+            page_content=dept_content,
+            metadata={"source": path}
+        )
+        # docs: Documentオブジェクトのリスト（部署ごとに1つのDocumentが追加される）
+        # 出力イメージ:
+        # [
+        #   Document(page_content="## 人事部に所属している従業員情報\n...", metadata={"source": "..."}),
+        #   Document(page_content="## 営業部に所属している従業員情報\n...", metadata={"source": "..."}),
+        #   ...
+        # ]
+        docs.append(doc)
     
     return docs
 
