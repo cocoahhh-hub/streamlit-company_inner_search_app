@@ -122,9 +122,10 @@ def initialize_retriever():
     embeddings = OpenAIEmbeddings()
     
     # チャンク分割用のオブジェクトを作成
+    # 【問題２】変数として定義
     text_splitter = CharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50,
+        chunk_size=ct.RAG_CHUNK_SIZE,
+        chunk_overlap=ct.RAG_CHUNK_OVERLAP,
         separator="\n"
     )
 
@@ -135,8 +136,9 @@ def initialize_retriever():
     db = Chroma.from_documents(splitted_docs, embedding=embeddings)
 
     # ベクターストアを検索するRetrieverの作成
-    st.session_state.retriever = db.as_retriever(search_kwargs={"k": 3})
-
+    # 【問題1】ベクターストアから取り出してプロンプトに埋め込む関連ドキュメントの数を数を3から5に修正
+    # 【問題２変数として定義
+    st.session_state.retriever = db.as_retriever(search_kwargs={"k": ct.RAG_RELATED_DOCUMENT_COUNT})
 
 def initialize_session_state():
     """

@@ -55,6 +55,12 @@ SUPPORTED_EXTENSIONS = {
 WEB_URL_LOAD_TARGETS = [
     "https://generative-ai.web-camp.io/"
 ]
+# 【問題1】ベクターストアから取り出してプロンプトに埋め込む関連ドキュメントの数を数を3から5に修正
+# 【問題２変数として定義
+RAG_RELATED_DOCUMENT_COUNT = 5
+# 【問題２】変数として定義
+RAG_CHUNK_SIZE = 500
+RAG_CHUNK_OVERLAP = 50
 
 
 # ==========================================
