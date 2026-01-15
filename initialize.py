@@ -18,6 +18,8 @@ from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain.schema import Document as LangchainDocument
+import csv
 import constants as ct
 
 
@@ -200,6 +202,154 @@ def recursive_file_check(path, docs_all):
         # パスがファイルの場合、ファイル読み込み
         file_load(path, docs_all)
 
+# 【問題6】csvファイルを1つのドキュメントに統合
+def load_csv_as_unified_document(path):
+    """
+    CSVファイルを部署ごとにグループ化して1つのドキュメントに統合
+    
+    Args:
+        path: CSVファイルのパス
+        
+    Returns:
+        統合されたDocumentオブジェクトのリスト
+    """
+    # 最終的に返すDocumentオブジェクトのリスト
+    # 出力イメージ: [Document(page_content="...", metadata={"source": "..."})]
+    docs = []
+    
+    # ==========================================
+    # ステップ1: CSVファイルを読み込む
+    # ==========================================
+    with open(path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        # rows: CSVの各行が辞書形式になったリスト
+        # 出力イメージ:
+        # [
+        #   {'社員ID': 'EMP0001', '氏名（フルネーム）': '山下 涼平', '部署': '営業部', ...},
+        #   {'社員ID': 'EMP0002', '氏名（フルネーム）': '林 真綾', '部署': '総務部', ...},
+        #   {'社員ID': 'EMP0006', '氏名（フルネーム）': '斉藤 舞', '部署': '人事部', ...},
+        #   ...
+        # ]
+        rows = list(reader)
+    
+    # ==========================================
+    # ステップ2: 部署ごとにグループ化
+    # ==========================================
+    # departments: 部署名をキー、その部署の社員リストを値とする辞書
+    # 出力イメージ:
+    # {
+    #   '営業部': [
+    #     {'社員ID': 'EMP0001', '氏名（フルネーム）': '山下 涼平', '部署': '営業部', ...},
+    #     ...
+    #   ],
+    #   '人事部': [
+    #     {'社員ID': 'EMP0006', '氏名（フルネーム）': '斉藤 舞', '部署': '人事部', ...},
+    #     {'社員ID': 'EMP0013', '氏名（フルネーム）': '鈴木 あすか', '部署': '人事部', ...},
+    #     ...
+    #   ],
+    #   ...
+    # }
+    departments = {}
+    for row in rows:
+        # row: CSVの1行分のデータ（辞書形式）
+        # 出力イメージ: {'社員ID': 'EMP0006', '氏名（フルネーム）': '斉藤 舞', '部署': '人事部', ...}
+        dept = row.get('部署', '未分類')
+        if dept not in departments:
+            departments[dept] = []
+        departments[dept].append(row)
+    
+    # ==========================================
+    # ステップ3: 部署ごとに構造化されたテキストを生成
+    # ==========================================
+    # unified_content_parts: 統合されたテキストの各部分を格納するリスト
+    # 出力イメージ:
+    # [
+    #   "\n## 人事部に所属している従業員情報\n",
+    #   "人事部に所属している従業員は以下の9名です：\n",
+    #   "【社員ID: EMP0006】\n氏名: 斉藤 舞\n性別: 女性\n...",
+    #   "",
+    #   "【社員ID: EMP0013】\n氏名: 鈴木 あすか\n性別: 男性\n...",
+    #   "",
+    #   "\n## 営業部に所属している従業員情報\n",
+    #   ...
+    # ]
+    unified_content_parts = []
+    for dept, employees in departments.items():
+        # dept: 部署名（例: '人事部'）
+        # employees: その部署に所属する社員のリスト
+        unified_content_parts.append(f"\n## {dept}に所属している従業員情報\n")
+        unified_content_parts.append(f"{dept}に所属している従業員は以下の{len(employees)}名です：\n")
+        
+        for emp in employees:
+            # emp: 1人の社員の情報（辞書形式）
+            # 出力イメージ: {'社員ID': 'EMP0006', '氏名（フルネーム）': '斉藤 舞', '部署': '人事部', ...}
+            # emp_info: 1人の社員情報を構造化したテキストの各行
+            # 出力イメージ:
+            # [
+            #   "【社員ID: EMP0006】",
+            #   "氏名: 斉藤 舞",
+            #   "性別: 女性",
+            #   "年齢: 43歳",
+            #   ...
+            # ]
+            emp_info = []
+            emp_info.append(f"【社員ID: {emp.get('社員ID', '')}】")
+            emp_info.append(f"氏名: {emp.get('氏名（フルネーム）', '')}")
+            emp_info.append(f"性別: {emp.get('性別', '')}")
+            emp_info.append(f"年齢: {emp.get('年齢', '')}歳")
+            emp_info.append(f"役職: {emp.get('役職', '')}")
+            emp_info.append(f"従業員区分: {emp.get('従業員区分', '')}")
+            emp_info.append(f"メールアドレス: {emp.get('メールアドレス', '')}")
+            emp_info.append(f"スキルセット: {emp.get('スキルセット', '')}")
+            emp_info.append(f"保有資格: {emp.get('保有資格', '')}")
+            emp_info.append(f"大学: {emp.get('大学名', '')} {emp.get('学部・学科', '')}")
+            
+            # emp_infoの各行を改行で結合して1つの文字列にし、リストに追加
+            # 出力イメージ: "【社員ID: EMP0006】\n氏名: 斉藤 舞\n性別: 女性\n..."
+            unified_content_parts.append("\n".join(emp_info))
+            unified_content_parts.append("")  # 空行で区切り
+    
+    # ==========================================
+    # ステップ4: 統合されたコンテンツを作成
+    # ==========================================
+    # unified_content: すべての部署の社員情報を統合した1つの文字列
+    # 出力イメージ:
+    # """
+    # ## 人事部に所属している従業員情報
+    # 人事部に所属している従業員は以下の9名です：
+    # 
+    # 【社員ID: EMP0006】
+    # 氏名: 斉藤 舞
+    # 性別: 女性
+    # ...
+    # 
+    # 【社員ID: EMP0013】
+    # ...
+    # 
+    # ## 営業部に所属している従業員情報
+    # ...
+    # """
+    unified_content = "\n".join(unified_content_parts)
+    
+    # ==========================================
+    # ステップ5: Documentオブジェクトを作成
+    # ==========================================
+    # doc: LangChainのDocumentオブジェクト
+    # 出力イメージ:
+    # Document(
+    #   page_content="## 人事部に所属している従業員情報\n...",
+    #   metadata={"source": "./data/社員について/社員名簿.csv"}
+    # )
+    doc = LangchainDocument(
+        page_content=unified_content,
+        metadata={"source": path}
+    )
+    # docs: Documentオブジェクトのリスト（この場合は1つのDocumentのみ）
+    # 出力イメージ: [Document(page_content="...", metadata={"source": "..."})]
+    docs.append(doc)
+    
+    return docs
+
 
 def file_load(path, docs_all):
     """
@@ -216,9 +366,15 @@ def file_load(path, docs_all):
 
     # 想定していたファイル形式の場合のみ読み込む
     if file_extension in ct.SUPPORTED_EXTENSIONS:
-        # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
-        loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
-        docs = loader.load()
+        # 【問題６】csvファイルを1つのドキュメントに統合
+        # CSVファイルの場合は特別な処理を行う
+        if file_extension == ".csv":
+            # CSVファイルを部署ごとにグループ化して1つのドキュメントに統合
+            docs = load_csv_as_unified_document(path)
+        else:
+            # その他のファイル形式は通常のloaderを使用
+            loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
+            docs = loader.load()
         docs_all.extend(docs)
 
 
